@@ -10,7 +10,7 @@ protected:
 	size_t last;
 	size_t capacity;
 public:
-	Vector(std::initializer_list<T>&& arr) 
+	Vector(std::initializer_list<T>&& arr)
 	{
 		this -> last = arr.size() - 1;
 		this -> capacity = arr.size();
