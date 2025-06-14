@@ -16,16 +16,18 @@ struct Task {
 
 class Semaphore {
 private:
-	size_t count = static_cast<size_t>(INFINITY);
+	size_t count;
 	std::condition_variable cv;
 	std::mutex mtx;
+  bool is_infinite;
 public:
   explicit Semaphore(size_t count = 0) {
-    this -> count = count == 0 ? this -> count : count;
+    this -> count = count;
+    this -> is_infinite = (count == 0);
   }
   void acquire() {
   	std::unique_lock<std::mutex> lock(this -> mtx);
-   	this -> cv.wait(lock, [this]{return this -> count > 0;});
+   	this -> cv.wait(lock, [this]{return this -> count > 0 || this -> is_infinite;});
     this -> count--;
   }
   void release() {
@@ -75,7 +77,7 @@ private:
 	
 public:
   Worker(size_t max_threads = 0) {
-   	this -> semaphore = new Semaphore(max_threads);
+   	this -> semaphore = new Semaphore{max_threads};
     this -> target_locker = new TargetLocker<TargetIdType>{};
     this -> execute = this -> init_execute();
   }
@@ -84,7 +86,13 @@ public:
    	for (Task<TargetIdType>& task : queue) {
 			this -> target_locker -> acquire(task.targetId);
       this -> semaphore -> acquire();
-      threads.emplace_back(this -> execute, std::ref(task));
+      bool is_started = false;
+      while (!is_started) {
+        try {
+          threads.emplace_back(this -> execute, std::ref(task));
+          is_started = true;
+        } catch (const std::exception& e) {}
+      }
     }
     for (std::thread& t : threads) {
       t.join();
@@ -98,13 +106,13 @@ public:
 
 
 int main() {
-  Worker<long long> worker{100};
+  Worker<long long> worker{};
   const int max_tasks = 1000000;
   std::vector<Task<long long>> tasks(max_tasks);
   for (long long i = 0; i < max_tasks; ++i) {
-    tasks[i] = Task<long long>{i, [i]() {
+    tasks[i] = Task<long long>{i,[i]() {
       std::cout << i << std::endl;
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }};
   }
   worker.run(std::move(tasks));
