@@ -67,12 +67,12 @@ private:
 	size_t max_threads;
 	Semaphore* semaphore;
 	TargetLocker* target_locker;
+  std::function<void(Task&)> execute;
 	
 	auto init_execute() {
 		return [this](Task& task) -> void {
 			const int targetId = task.targetId;
 			this -> target_locker -> acquire(targetId);
-			this -> semaphore -> acquire();
 			task.execute();
 			this -> semaphore -> release();
 			this -> target_locker -> release(targetId);
@@ -84,13 +84,13 @@ public:
   	this -> max_threads = max_threads;
    	this -> semaphore = new Semaphore(max_threads);
     this -> target_locker = new TargetLocker{};
+    this -> execute = this -> init_execute();
   }
-  template<class T>
-  void run(T&& queue) {
-  	const std::function<void(Task&)> execute = this -> init_execute();
+  void run(std::vector<Task>&& queue) {
     std::vector<std::thread> threads;
    	for (Task& task : queue) {
-    	threads.emplace_back(execute, std::ref(task));
+      this -> semaphore -> acquire();
+      threads.emplace_back(this -> execute, std::ref(task));
     }
     for (std::thread& t : threads) {
       t.join();
@@ -104,15 +104,15 @@ public:
 
 
 int main() {
-  Worker worker(100);
-  const int max_tasks = 1000;
+  Worker worker{};
+  const int max_tasks = 1000000;
   std::vector<Task> tasks(max_tasks);
   for (int i = 0; i < max_tasks; ++i) {
-    tasks[i] = Task{i % 10, [i]() {
+    tasks[i] = Task{i, [i]() {
       std::cout << i << std::endl;
-      std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }};
   }
-  worker.run(tasks);
+  worker.run(std::move(tasks));
   return 0;
 }
