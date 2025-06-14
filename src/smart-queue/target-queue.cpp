@@ -1,9 +1,12 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <thread>
+#include <vector>
+#include <iostream>
 
 struct Task {
 	int targetId;
@@ -19,7 +22,7 @@ private:
 	std::mutex mtx;
 public:
   Semaphore(int count = 0) {
-    this -> count = count || infinity;
+    this -> count = (count == 0 ? this -> infinity : count);
   }
   
   void acquire() {
@@ -34,7 +37,6 @@ public:
   	this -> count++;
    	this -> cv.notify_one();
   }
-  
 };
 
 class TargetLocker {
@@ -67,7 +69,7 @@ private:
 	TargetLocker* target_locker;
 	
 	auto init_execute() {
-		return [&](Task& task) -> void {
+		return [this](Task& task) -> void {
 			const int targetId = task.targetId;
 			this -> target_locker -> acquire(targetId);
 			this -> semaphore -> acquire();
@@ -83,12 +85,12 @@ public:
    	this -> semaphore = new Semaphore(max_threads);
     this -> target_locker = new TargetLocker{};
   }
-  
-  void run(std::vector<Task> queue) {
-  	const std::function execute = this -> init_execute();
+  template<class T>
+  void run(T&& queue) {
+  	const std::function<void(Task&)> execute = this -> init_execute();
     std::vector<std::thread> threads;
-   	for (const Task& task : queue) {
-    	threads.emplace_back(execute, task);
+   	for (Task& task : queue) {
+    	threads.emplace_back(execute, std::ref(task));
     }
     for (std::thread& t : threads) {
       t.join();
@@ -99,3 +101,18 @@ public:
   	delete this -> target_locker;
   }
 };
+
+
+int main() {
+  Worker worker(100);
+  const int max_tasks = 1000;
+  std::vector<Task> tasks(max_tasks);
+  for (int i = 0; i < max_tasks; ++i) {
+    tasks[i] = Task{i % 10, [i]() {
+      std::cout << i << std::endl;
+      std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    }};
+  }
+  worker.run(tasks);
+  return 0;
+}
