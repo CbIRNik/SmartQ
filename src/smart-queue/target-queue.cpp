@@ -8,28 +8,24 @@
 #include <vector>
 #include <iostream>
 
+template<class TargetIdType>
 struct Task {
-	int targetId;
+  TargetIdType targetId;
 	std::function<void()> execute;
 };
 
 class Semaphore {
-protected:
-	const int infinity = static_cast<int>(INFINITY);
 private:
-	int count;
+	size_t count = static_cast<size_t>(INFINITY);
 	std::condition_variable cv;
 	std::mutex mtx;
 public:
-  Semaphore(int count = 0) {
-    this -> count = (count == 0 ? this -> infinity : count);
+  explicit Semaphore(size_t count = 0) {
+    this -> count = count == 0 ? this -> count : count;
   }
-  
   void acquire() {
   	std::unique_lock<std::mutex> lock(this -> mtx);
-   	while (this -> count <= 0) {
-   		this -> cv.wait(lock);
-    }
+   	this -> cv.wait(lock, [this]{return this -> count > 0;});
     this -> count--;
   }
   void release() {
@@ -39,40 +35,38 @@ public:
   }
 };
 
+template<class T>
 class TargetLocker {
 private:
-	std::map<int, bool> lockTargets;
+	std::map<T, bool> lockTargets;
 	std::condition_variable cv;
 	std::mutex mtx;
 public:
   TargetLocker() {}
   
-  void acquire(int targetId) {
+  void acquire(T targetId) {
   	std::unique_lock<std::mutex> lock(this -> mtx);
-   	while (this -> lockTargets[targetId]) {
-    	this -> cv.wait(lock);
-    }
+    this -> cv.wait(lock, [&]{return !this -> lockTargets[targetId];});
     this -> lockTargets[targetId] = true;
   }
   
-  void release(int targetId) {
+  void release(T targetId) {
   	std::unique_lock<std::mutex> lock(this -> mtx);
    	this -> lockTargets[targetId] = false;
     this -> cv.notify_one();
   }
 };
 
+template<class TargetIdType>
 class Worker { 
 private: 
-	size_t max_threads;
 	Semaphore* semaphore;
-	TargetLocker* target_locker;
-  std::function<void(Task&)> execute;
+	TargetLocker<TargetIdType>* target_locker;
+  std::function<void(Task<TargetIdType>&)> execute;
 	
 	auto init_execute() {
-		return [this](Task& task) -> void {
-			const int targetId = task.targetId;
-			this -> target_locker -> acquire(targetId);
+		return [this](Task<TargetIdType>& task) -> void {
+			const TargetIdType targetId = task.targetId;
 			task.execute();
 			this -> semaphore -> release();
 			this -> target_locker -> release(targetId);
@@ -80,15 +74,15 @@ private:
 	};
 	
 public:
-  Worker(int max_threads = 0) {
-  	this -> max_threads = max_threads;
+  Worker(size_t max_threads = 0) {
    	this -> semaphore = new Semaphore(max_threads);
-    this -> target_locker = new TargetLocker{};
+    this -> target_locker = new TargetLocker<TargetIdType>{};
     this -> execute = this -> init_execute();
   }
-  void run(std::vector<Task>&& queue) {
+  void run(std::vector<Task<TargetIdType>>&& queue) {
     std::vector<std::thread> threads;
-   	for (Task& task : queue) {
+   	for (Task<TargetIdType>& task : queue) {
+			this -> target_locker -> acquire(task.targetId);
       this -> semaphore -> acquire();
       threads.emplace_back(this -> execute, std::ref(task));
     }
@@ -104,11 +98,11 @@ public:
 
 
 int main() {
-  Worker worker{};
+  Worker<long long> worker{100};
   const int max_tasks = 1000000;
-  std::vector<Task> tasks(max_tasks);
-  for (int i = 0; i < max_tasks; ++i) {
-    tasks[i] = Task{i, [i]() {
+  std::vector<Task<long long>> tasks(max_tasks);
+  for (long long i = 0; i < max_tasks; ++i) {
+    tasks[i] = Task<long long>{i, [i]() {
       std::cout << i << std::endl;
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }};
